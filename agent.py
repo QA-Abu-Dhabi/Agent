@@ -154,24 +154,79 @@ class PDFProcessor(QWidget):
         return results
 
     def extract_kc2_sum(self, pdf_filename):
+        print(f"\nОткрытие файла: {pdf_filename}")
         with pdfplumber.open(pdf_filename) as pdf:
-            for page in reversed(pdf.pages):  # Перебираем страницы с конца
+            total_pages = len(pdf.pages)
+            print(f"Всего страниц в PDF: {total_pages}")
+            
+            # Сначала ищем строку со словами "всего по акту"
+            for i, page in enumerate(reversed(pdf.pages), start=1):
+                page_number = total_pages - i + 1
+                print(f"\nОбработка страницы {page_number} (с конца)")
+
                 tables = page.extract_tables()
-                for table in tables:
-                    for row in table:
-                        if row and row[0] and ("всего по акту" in row[0].lower()):
-                            if len(row) > 7 and row[7]:
-                                raw_value = row[7].replace("\u00A0", "").replace(" ", "")
-                                try:
-                                    return round(float(raw_value.replace(",", ".")), 2)
-                                except ValueError:
-                                    pass
-                            if len(row) > 8 and row[8]:
-                                raw_value = row[8].replace("\u00A0", "").replace(" ", "")
-                                try:
-                                    return round(float(raw_value.replace(",", ".")), 2)
-                                except ValueError:
-                                    return raw_value
+                print(f"  Найдено таблиц: {len(tables)}")
+
+                for t_index, table in enumerate(tables):
+                    print(f"    Обработка таблицы {t_index + 1}")
+                    for r_index, row in enumerate(table):
+                        if not row:
+                            continue
+                        if row[0] and "всего по акту" in row[0].lower():
+                            print(f"      Найдена строка со словами 'всего по акту': {row}")
+                            for col_index in [7, 8]:
+                                if len(row) > col_index and row[col_index]:
+                                    raw_value = row[col_index].replace("\u00A0", "").replace(" ", "")
+                                    print(f"        Попытка извлечь значение из столбца {col_index + 1}: {raw_value}")
+                                    try:
+                                        number = round(float(raw_value.replace(",", ".")), 2)
+                                        print(f"        Успешно извлечено число: {number}")
+                                        return number
+                                    except ValueError:
+                                        print("        Ошибка преобразования в число")
+                                        continue
+            
+            print("\nНе удалось найти строку 'всего по акту'. Переход к альтернативному способу...")
+
+            # Альтернатива — последняя строка последней страницы
+            def try_extract_from_page(page, page_index):
+                tables = page.extract_tables()
+                print(f"\nСтраница {page_index + 1}: найдено таблиц: {len(tables)}")
+
+                if not tables:
+                    return None  # таблиц нет — вернём None
+
+                last_table = tables[-1]
+                last_row = last_table[-1]
+                print(f"Последняя строка таблицы: {last_row}")
+
+                for col_index, col in enumerate(reversed(last_row), start=1):
+                    if col:
+                        raw_value = col.replace("\u00A0", "").replace(" ", "")
+                        print(f"  Проверка значения (с конца, столбец -{col_index}): {raw_value}")
+                        try:
+                            number = round(float(raw_value.replace(",", ".")), 2)
+                            print(f"  Успешно извлечено число: {number}")
+                            return number
+                        except ValueError:
+                            print("  Не удалось преобразовать в число.")
+                            continue
+                return None
+
+            # Пробуем на последней странице
+            last_page_index = total_pages - 1
+            result = try_extract_from_page(pdf.pages[last_page_index], last_page_index)
+
+            # Если не получилось — пробуем на предпоследней
+            if result is None and total_pages >= 2:
+                print("\nНа последней странице таблиц нет или значение не найдено. Пробуем на предпоследней...")
+                prev_page_index = total_pages - 2
+                result = try_extract_from_page(pdf.pages[prev_page_index], prev_page_index)
+
+            if result is not None:
+                return result
+
+        print("Итог: число не найдено.")
         return "Не найдено"
 
     def extract_oa_values(self, pdf_filename):
@@ -205,43 +260,64 @@ class PDFProcessor(QWidget):
                             return value_7, value_11  # Как только нашли строку, выходим
 
         return "Не найдено", "Не найдено"
-                        
-    def extract_oa_values1(self, pdf_filename):
-        with pdfplumber.open(pdf_filename) as pdf:
-            for page_num, page in enumerate(reversed(pdf.pages), start=1):
-                tables = page.extract_tables()
-                for table in tables:
-                    for row in table:
-                        if row and row[0] and ("всего" in row[2].lower()):
-                            if len(row) > 6 and len(row) > 10:
-                                value_7 = row[6].replace("\u00A0", "").replace(" ", "").replace(",", ".") if row[6] else "Не найдено"
-                                value_11 = row[10].replace("\u00A0", "").replace(" ", "").replace(",", ".") if row[10] else "Не найдено"
-                                try:
-                                    value_7 = round(float(value_7), 2)
-                                except ValueError:
-                                    pass
-                                try:
-                                    value_11 = round(float(value_11), 2)
-                                except ValueError:
-                                    pass
-                                return value_7, value_11
-        return "Не найдено", "Не найдено"
-
+    
+    
     def extract_sf_values(self, pdf_filename):
+        print(f"\nОткрытие файла: {pdf_filename}")
         with pdfplumber.open(pdf_filename) as pdf:
-            for page in pdf.pages:
+            total_pages = len(pdf.pages)
+            print(f"Всего страниц: {total_pages}")
+
+            for offset in [1, 2]:  # Последняя и предпоследняя страницы
+                page_index = total_pages - offset
+                if page_index < 0:
+                    continue
+
+                page = pdf.pages[page_index]
+                print(f"\nПроверка страницы {page_index + 1}")
+
                 tables = page.extract_tables()
-                for table in tables:
-                    if len(table) > 3:
-                        row = table[3]
-                        if len(row) > 7:
-                            value_8 = row[7].replace("\u00A0", "").replace(" ", "").replace(",", ".") if row[7] else "Не найдено"
-                            try:
-                                value_8 = round(float(value_8), 2)
-                            except ValueError:
-                                pass
-                            sf_type = "СФ АВ" if len(row) > 1 and row[1] and "Агентское вознаграждение" in row[1] else "СФ СМР"
-                            return sf_type, value_8
+                print(f"  Найдено таблиц: {len(tables)}")
+
+                if not tables:
+                    print("  Таблиц не найдено на странице.")
+                    continue
+
+                last_table = tables[-1]
+                if not last_table or len(last_table) < 2:
+                    print("  Таблица пуста или недостаточно строк.")
+                    continue
+
+                # Последняя строка — значение
+                last_row = last_table[-1]
+                # Предпоследняя строка — определение типа
+                second_last_row = last_table[-2]
+
+                print(f"  Последняя строка: {last_row}")
+                print(f"  Предпоследняя строка: {second_last_row}")
+
+                # Извлечение значения из столбца 8
+                if len(last_row) > 7 and last_row[7]:
+                    raw_value = last_row[7].replace("\u00A0", "").replace(" ", "").replace(",", ".")
+                    try:
+                        value_8 = round(float(raw_value), 2)
+                    except ValueError:
+                        value_8 = "Ошибка"
+                    print(f"  Извлечённое значение из столбца 8: {value_8}")
+                else:
+                    value_8 = "Не найдено"
+                    print("  Столбец 8 отсутствует или пуст.")
+
+                # Определение типа по содержимому 2-го столбца предпоследней строки
+                if len(second_last_row) > 1 and second_last_row[1] and "Агентское вознаграждение" in second_last_row[1]:
+                    sf_type = "СФ АВ"
+                else:
+                    sf_type = "СФ СМР"
+                print(f"  Тип СФ: {sf_type}")
+
+                return sf_type, value_8
+
+        print("  Не удалось извлечь данные.")
         return "Не найдено", "Не найдено"
 
     def save_to_excel(self, results):
